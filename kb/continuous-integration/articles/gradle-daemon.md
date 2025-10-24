@@ -52,20 +52,44 @@ To optimize the build process and improve performance, use a [Background step](h
                         memory: 1G
 ```
 
-## Parallel Gradle builds fail with "Currently in use by another Gradle instance"
+## Parallel Gradle builds fail with "Currently in use by another Gradle instance" or "Lock artifact cache"
 
-Multiple parallel steps attempting to run `gradle build` (or other tasks) can cause the following error when multiple steps attempt to acquire lock on the same file:
+For Gradle, there is a limitation regardless of Harness.   Users can’t run Gradle in two or more different processes in parallel.  This results in a failure due to some format of locking.  This also occurs locally if running two or more Gradle processes in parallel utilizing shared resources.
+
+Some sample of errors include:
+
+```
+Timeout waiting to lock artifact cache (/common/user/.gradle/caches/modules-2). It is currently in use by another Gradle instance.
+Owner PID: 1XXXX
+Our PID: 1XXXX
+Owner Operation: resolve configuration ':classpath’
+Our operation: resolve configuration ':classpath’
+Lock file: /common/user/.gradle/caches/modules-2/modules-2.lock
+```
 
 ```
 Timeout waiting to lock checksums cache. It is currently in use by another Gradle instance.
 ```
 
-To resolve this, set a custom `GRADLE_USER_HOME` directory for each daemon. Add the following commands before your first `gradle TASK` command in each step, and make sure the custom path *is not* in your stage's [shared paths](https://developer.harness.io/docs/continuous-integration/use-ci/set-up-build-infrastructure/ci-stage-settings#shared-paths).
+Gradle is reliant on having unique structures due to their locks in three areas
+* GRADLE_USER_HOME
+* Build Cache Directory
+* Project directory
 
-```
-mkdir -p /tmp/gradlehome
-export GRADLE_USER_HOME=/tmp/gradlehome
-```
+It is possible to hit various conflicts, but it all comes down to one important thing - pods/steps in the same stage share disk causing lock file(s) or directory with another Gradle process.
+
+Users need to be careful of instances where they are creating Gradle operations in **steps** or **step groups** where there are instances of matrix and parallelism strategies, or parallel processes.   This can cause multiple pods and or containers to run in parallel or overlap, all sharing the same disk space.  This then leads the Gradle runs to fail in some of the steps.
+
+Note that this applies to Run steps, or Harness Test Intelligence step alike (e.g the Java agent in Harness Test Intelligence).
+
+Of particular note, setting GRADLE_USER_HOME as a unique folder *does not help* as the lock file is being set in the root folder of the project: /harness/.gradle/noVersion/buildLogic.lock and Gradle does not support changing this location.
+
+To solve this, Harness recommends considering one of the following three options
+* Separate stages (can be run in parallel) 
+* Separate the Git folders used for building
+* Having a preliminary step to pre populate the dependency cache for Gradle in a shared folder, like [shown in this Stackoverflow article](https://stackoverflow.com/questions/74339765/how-can-i-make-one-single-gradle-cache-for-multiple-projects)
+
+
 
 For more information and discussion on this Gradle error, go to:
 
